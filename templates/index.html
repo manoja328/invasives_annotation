@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panorama Details</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            width: 80%;
+            margin: 0 auto;
+        }
+        .buttons {
+            margin: 10px 0;
+        }
+        .buttons button {
+            margin-right: 5px;
+        }
+        #canvas {
+            border: 1px solid black;
+            cursor: crosshair;
+        }
+        .bounding-boxes {
+            margin: 20px 0;
+        }
+        .navigation {
+            margin: 10px 0;
+        }
+        .delete-icon {
+            position: absolute;
+            background: red;
+            color: white;
+            cursor: pointer;
+            z-index: 1000;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="navigation">
+            <button id="prev-button">Previous</button>
+            <button id="next-button">Next</button>
+            <span id="image-index">1/{{ total_images }}</span>
+        </div>
+        <canvas id="canvas" width="800" height="400"></canvas>
+        <div id="delete-icon" class="delete-icon">X</div>
+        
+        <div class="buttons">
+            <button id="toggle-high-res">Toggle High resolution image</button>
+            <button id="select-mode">Select</button>
+            <button id="pan-mode">Pan</button>
+            <button id="add-bounding-box">Add bounding box</button>
+            <button id="delete-selected" disabled>Delete Selected</button>
+        </div>
+        
+        <p id="mode">Panning mode</p>
+        
+        <div class="bounding-boxes">
+            <h2>Bounding boxes</h2>
+            <button id="update-species">Update all bounding boxes' species to:</button>
+            <select id="species-select">
+                <option value="Common Reed">Common Reed (Phragmites)</option>
+                <option value="Japanese Knotweed">Japanese Knotweed</option>
+                <!-- Add more species options here -->
+            </select>
+        </div>
+        
+        <div class="panorama-details">
+            <h2>Panorama Details</h2>
+            <p><strong>Dataset:</strong> iMAP General</p>
+            <p><strong>Species from iMAP:</strong> Japanese Knotweed</p>
+            <p><strong>Google Image Date:</strong> 10/01/2014</p>
+            <p><strong>(Lat/Lon):</strong> (43.493968, -73.626383)</p>
+            <p><strong>Description:</strong> NY-9L</p>
+            <p><strong>Region:</strong> Queensbury, New York</p>
+            <p><input type="checkbox"> Check this box if you are not able to identify any invasive species (Phragmites, Japanese Knotweed, wild parsnip, purple loosestrife, tree of heaven, cattail, and giant hogweed) in this image.</p>
+            <p><strong>Comments:</strong></p>
+            <textarea rows="4" cols="50"></textarea>
+        </div>
+
+        <button id="submit-boxes">Submit Bounding Boxes</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+        let isPanning = false;
+        let startX, startY;
+        let mode = 'pan'; // default mode
+        let boundingBoxes = [];
+        let selectedBox = null;
+        let scale = 1;
+        let panX = 0;
+        let panY = 0;
+        let imgX = 0;
+        let imgY = 0;
+        let currentImageIndex = 0;
+
+        const images = {{ images | tojson }};
+        const totalImages = {{ total_images }};
+        const img = new Image();
+        const speciesSelect = document.getElementById('species-select');
+        const deleteIcon = document.getElementById('delete-icon');
+        
+        const colors = {
+            "Common Reed": "blue",
+            "Japanese Knotweed": "red"
+            // Add more species colors here
+        };
+
+        function loadImage(index) {
+            img.src = `/static/${images[index]}`;
+            img.onload = function() {
+                drawImage();
+            };
+        }
+
+        function drawImage() {
+            ctx.setTransform(scale, 0, 0, scale, panX, panY);
+            ctx.clearRect(-panX, -panY, canvas.width / scale, canvas.height / scale);
+            ctx.drawImage(img, imgX, imgY, canvas.width, canvas.height);
+            boundingBoxes.forEach(box => {
+                ctx.strokeStyle = colors[box.species];
+                ctx.strokeRect(box.startX, box.startY, box.endX - box.startX, box.endY - box.startY);
+                if (box === selectedBox) {
+                    ctx.strokeStyle = 'green';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(box.startX - 2, box.startY - 2, box.endX - box.startX + 4, box.endY - box.startY + 4);
+                    ctx.lineWidth = 1;
+                }
+            });
+        }
+
+        function updateImageIndex() {
+            document.getElementById('image-index').innerText = `${currentImageIndex + 1}/${totalImages}`;
+        }
+
+        document.getElementById('prev-button').addEventListener('click', () => {
+            if (currentImageIndex > 0) {
+                currentImageIndex--;
+                loadImage(currentImageIndex);
+                updateImageIndex();
+            }
+        });
+
+        document.getElementById('next-button').addEventListener('click', () => {
+            if (currentImageIndex < totalImages - 1) {
+                currentImageIndex++;
+                loadImage(currentImageIndex);
+                updateImageIndex();
+            }
+        });
+
+        loadImage(currentImageIndex);
+        updateImageIndex();
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (mode === 'draw') {
+                isDrawing = true;
+                startX = e.offsetX / scale - panX / scale;
+                startY = e.offsetY / scale - panY / scale;
+            } else if (mode === 'pan') {
+                isPanning = true;
+                startX = e.offsetX - panX;
+                startY = e.offsetY - panY;
+            } else if (mode === 'select') {
+                const clickX = e.offsetX / scale - panX / scale;
+                const clickY = e.offsetY / scale - panY / scale;
+                selectedBox = null;
+                boundingBoxes.forEach(box => {
+                    if (clickX > box.startX && clickX < box.endX && clickY > box.startY && clickY < box.endY) {
+                        selectedBox = box;
+                    }
+                });
+                drawImage();
+                if (selectedBox) {
+                    deleteIcon.style.display = 'block';
+                    deleteIcon.style.left = `${selectedBox.startX * scale + panX}px`;
+                    deleteIcon.style.top = `${selectedBox.startY * scale + panY - 20}px`;
+                } else {
+                    deleteIcon.style.display = 'none';
+                }
+            }
+        });
+
+        deleteIcon.addEventListener('click', () => {
+            if (selectedBox) {
+                const index = boundingBoxes.indexOf(selectedBox);
+                if (index > -1) {
+                    boundingBoxes.splice(index, 1);
+                    selectedBox = null;
+                    deleteIcon.style.display = 'none';
+                    drawImage();
+                }
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDrawing) {
+                const currentX = e.offsetX / scale - panX / scale;
+                const currentY = e.offsetY / scale - panY / scale;
+                drawImage();
+                ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
+            } else if (isPanning) {
+                panX = e.offsetX - startX;
+                panY = e.offsetY - startY;
+                drawImage();
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (isDrawing) {
+                isDrawing = false;
+                const endX = e.offsetX / scale - panX / scale;
+                const endY = e.offsetY / scale - panY / scale;
+                const species = speciesSelect.value;
+                boundingBoxes.push({ startX, startY, endX, endY, species });
+                drawImage();
+            } else if (isPanning) {
+                isPanning = false;
+            }
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoom = e.deltaY < 0 ? 1.1 : 0.9;
+            scale *= zoom;
+
+            panX = e.offsetX - (e.offsetX - panX) * zoom;
+            panY = e.offsetY - (e.offsetY - panY) * zoom;
+
+            drawImage();
+        });
+
+        document.getElementById('toggle-high-res').addEventListener('click', () => {
+            // Add functionality to toggle high resolution image
+        });
+
+        document.getElementById('select-mode').addEventListener('click', () => {
+            mode = 'select';
+            document.getElementById('mode').innerText = 'Select mode';
+        });
+
+        document.getElementById('pan-mode').addEventListener('click', () => {
+            mode = 'pan';
+            document.getElementById('mode').innerText = 'Panning mode';
+        });
+
+        document.getElementById('add-bounding-box').addEventListener('click', () => {
+            mode = 'draw';
+            document.getElementById('mode').innerText = 'Drawing mode';
+        });
+
+        document.getElementById('delete-selected').addEventListener('click', () => {
+            if (selectedBox) {
+                const index = boundingBoxes.indexOf(selectedBox);
+                if (index > -1) {
+                    boundingBoxes.splice(index, 1);
+                    selectedBox = null;
+                    deleteIcon.style.display = 'none';
+                    drawImage();
+                }
+            }
+        });
+
+        document.getElementById('submit-boxes').addEventListener('click', () => {
+            const data = { boundingBoxes: boundingBoxes };
+            fetch('/submit', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Success:', data);
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+            });
+        });
+    </script>
+</body>
+</html>
